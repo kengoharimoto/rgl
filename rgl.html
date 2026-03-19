@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RGL - Ripgrep-like Search</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #1e1e2e;
+    --surface: #252536;
+    --surface2: #2a2a3c;
+    --border: #3a3a4e;
+    --text: #cdd6f4;
+    --text-dim: #7f849c;
+    --accent: #89b4fa;
+    --accent2: #f38ba8;
+    --highlight-bg: #f9e2af22;
+    --highlight-border: #f9e2af;
+    --match-bg: #f9e2af40;
+    --green: #a6e3a1;
+  }
+
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top bar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .toolbar label {
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .toolbar button {
+    padding: 6px 14px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .toolbar button:hover { opacity: 0.85; }
+  .toolbar button:disabled { opacity: 0.4; cursor: default; }
+
+  #dir-name {
+    font-size: 12px;
+    color: var(--green);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #pattern {
+    flex: 1;
+    min-width: 200px;
+    padding: 6px 10px;
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+
+  #pattern:focus { border-color: var(--accent); }
+
+  .status {
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  /* Options row */
+  .options-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+
+  .options-row label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .options-row input[type="checkbox"] { accent-color: var(--accent); }
+
+  #file-filter {
+    padding: 4px 8px;
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+    width: 160px;
+  }
+
+  /* Main panels */
+  .panels {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-left {
+    width: 45%;
+    min-width: 280px;
+    border-right: 1px solid var(--border);
+  }
+
+  .panel-right {
+    flex: 1;
+  }
+
+  .panel-header {
+    padding: 8px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .panel-header .filename {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  /* Results */
+  .result-group {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .result-file {
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--surface2);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    cursor: pointer;
+  }
+
+  .result-file:hover { background: var(--surface); }
+
+  .result-file .match-count {
+    float: right;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  .result-line {
+    display: flex;
+    padding: 2px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+  }
+
+  .result-line:hover {
+    background: var(--surface2);
+    border-left-color: var(--accent);
+  }
+
+  .result-line.active {
+    background: var(--highlight-bg);
+    border-left-color: var(--highlight-border);
+  }
+
+  .result-line .line-num {
+    color: var(--text-dim);
+    min-width: 50px;
+    text-align: right;
+    padding-right: 12px;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .result-line .line-content {
+    white-space: pre-wrap;
+    word-break: break-all;
+    flex: 1;
+  }
+
+  .result-line .line-content mark {
+    background: var(--match-bg);
+    color: var(--accent2);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  /* Document viewer */
+  .doc-viewer {
+    counter-reset: line;
+  }
+
+  .doc-line {
+    display: flex;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 0 14px;
+  }
+
+  .doc-line .ln {
+    color: var(--text-dim);
+    min-width: 50px;
+    text-align: right;
+    padding-right: 12px;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .doc-line .lc {
+    white-space: pre-wrap;
+    word-break: break-all;
+    flex: 1;
+  }
+
+  .doc-line.highlighted {
+    background: var(--highlight-bg);
+    border-left: 3px solid var(--highlight-border);
+  }
+
+  .doc-line.highlighted mark {
+    background: var(--match-bg);
+    color: var(--accent2);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  /* Empty / loading states */
+  .placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 20px;
+    text-align: center;
+    line-height: 1.8;
+  }
+
+  /* Resize handle */
+  .resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .resize-handle:hover, .resize-handle.active {
+    background: var(--accent);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* Progress */
+  .progress-bar {
+    height: 2px;
+    background: var(--border);
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .progress-bar .fill {
+    position: absolute;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s;
+  }
+
+  .progress-bar.indeterminate .fill {
+    width: 30%;
+    animation: slide 1s ease-in-out infinite;
+  }
+
+  @keyframes slide {
+    0% { left: -30%; }
+    100% { left: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button id="pick-dir">Open Folder</button>
+  <span id="dir-name">No folder selected</span>
+  <label for="pattern">Pattern:</label>
+  <input type="text" id="pattern" placeholder="Enter regex pattern..." disabled>
+  <button id="search-btn" disabled>Search</button>
+  <span class="status" id="status"></span>
+</div>
+
+<div class="options-row">
+  <label><input type="checkbox" id="opt-case"> Case sensitive</label>
+  <label><input type="checkbox" id="opt-whole"> Whole word</label>
+  <label>File filter: <input type="text" id="file-filter" placeholder="e.g. *.js, *.txt"></label>
+  <label>Max file size:
+    <select id="max-size" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+      <option value="102400">100 KB</option>
+      <option value="524288" selected>512 KB</option>
+      <option value="1048576">1 MB</option>
+      <option value="5242880">5 MB</option>
+    </select>
+  </label>
+</div>
+
+<div class="progress-bar" id="progress"><div class="fill"></div></div>
+
+<div class="panels">
+  <div class="panel panel-left" id="panel-left">
+    <div class="panel-header">
+      <span>Results <span id="result-count"></span></span>
+    </div>
+    <div class="panel-body" id="results">
+      <div class="placeholder">Open a folder and search to see results</div>
+    </div>
+  </div>
+  <div class="resize-handle" id="resize-handle"></div>
+  <div class="panel panel-right">
+    <div class="panel-header">
+      <span>Document: <span class="filename" id="doc-filename">none</span></span>
+      <span id="doc-match-info"></span>
+    </div>
+    <div class="panel-body" id="doc-viewer">
+      <div class="placeholder">Click a result to view the document</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- State ---
+let rootHandle = null;
+let fileIndex = []; // {path, handle}
+let searchResults = []; // {path, handle, matches: [{lineNum, lineText}]}
+let currentRegex = null;
+let activeResultEl = null;
+let abortController = null;
+
+// --- DOM refs ---
+const pickDirBtn = document.getElementById('pick-dir');
+const dirNameEl = document.getElementById('dir-name');
+const patternInput = document.getElementById('pattern');
+const searchBtn = document.getElementById('search-btn');
+const statusEl = document.getElementById('status');
+const progressEl = document.getElementById('progress');
+const progressFill = progressEl.querySelector('.fill');
+const resultsEl = document.getElementById('results');
+const resultCountEl = document.getElementById('result-count');
+const docViewerEl = document.getElementById('doc-viewer');
+const docFilenameEl = document.getElementById('doc-filename');
+const docMatchInfoEl = document.getElementById('doc-match-info');
+const optCase = document.getElementById('opt-case');
+const optWhole = document.getElementById('opt-whole');
+const fileFilterInput = document.getElementById('file-filter');
+const maxSizeSelect = document.getElementById('max-size');
+
+// --- Binary detection ---
+const BINARY_EXTENSIONS = new Set([
+  'png','jpg','jpeg','gif','bmp','ico','webp','svg',
+  'mp3','mp4','avi','mov','mkv','wav','flac','ogg',
+  'zip','gz','tar','bz2','7z','rar','xz',
+  'pdf','doc','docx','xls','xlsx','ppt','pptx',
+  'exe','dll','so','dylib','o','a','class','pyc',
+  'woff','woff2','ttf','eot','otf',
+  'sqlite','db','DS_Store',
+]);
+
+function isBinaryFile(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
+// --- File filter matching ---
+function matchesFileFilter(path) {
+  const filter = fileFilterInput.value.trim();
+  if (!filter) return true;
+  const patterns = filter.split(',').map(p => p.trim()).filter(Boolean);
+  const name = path.split('/').pop();
+  return patterns.some(pat => {
+    // Simple glob: *.ext
+    if (pat.startsWith('*.')) {
+      return name.endsWith(pat.slice(1));
+    }
+    return name.includes(pat);
+  });
+}
+
+// --- Pick directory ---
+pickDirBtn.addEventListener('click', async () => {
+  try {
+    rootHandle = await window.showDirectoryPicker({ mode: 'read' });
+    dirNameEl.textContent = rootHandle.name;
+    patternInput.disabled = false;
+    searchBtn.disabled = false;
+    patternInput.focus();
+    statusEl.textContent = 'Indexing files...';
+    fileIndex = [];
+    await indexDir(rootHandle, '');
+    statusEl.textContent = `${fileIndex.length} files indexed`;
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error(e);
+  }
+});
+
+async function indexDir(dirHandle, prefix) {
+  for await (const entry of dirHandle.values()) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    if (entry.kind === 'file') {
+      if (!isBinaryFile(entry.name)) {
+        fileIndex.push({ path, handle: entry });
+      }
+    } else if (entry.kind === 'directory') {
+      await indexDir(entry, path);
+    }
+  }
+}
+
+// --- Search ---
+searchBtn.addEventListener('click', doSearch);
+patternInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch();
+});
+
+async function doSearch() {
+  const raw = patternInput.value.trim();
+  if (!raw || !rootHandle) return;
+
+  // Abort previous search
+  if (abortController) abortController.abort();
+  abortController = new AbortController();
+  const signal = abortController.signal;
+
+  // Build regex
+  let flags = 'g' + (optCase.checked ? '' : 'i');
+  let pattern = raw;
+  if (optWhole.checked) pattern = `\\b${pattern}\\b`;
+  try {
+    currentRegex = new RegExp(pattern, flags);
+  } catch (e) {
+    statusEl.textContent = `Invalid regex: ${e.message}`;
+    return;
+  }
+
+  searchResults = [];
+  resultsEl.innerHTML = '';
+  resultCountEl.textContent = '';
+  docViewerEl.innerHTML = '<div class="placeholder">Click a result to view the document</div>';
+  docFilenameEl.textContent = 'none';
+  docMatchInfoEl.textContent = '';
+  progressEl.classList.add('indeterminate');
+  statusEl.textContent = 'Searching...';
+
+  const maxSize = parseInt(maxSizeSelect.value);
+  let filesSearched = 0;
+  let totalMatches = 0;
+  const fragment = document.createDocumentFragment();
+
+  for (const { path, handle } of fileIndex) {
+    if (signal.aborted) break;
+    if (!matchesFileFilter(path)) continue;
+
+    try {
+      const file = await handle.getFile();
+      if (file.size > maxSize) continue;
+
+      const text = await file.text();
+      const lines = text.split('\n');
+      const matches = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        currentRegex.lastIndex = 0;
+        if (currentRegex.test(lines[i])) {
+          matches.push({ lineNum: i + 1, lineText: lines[i] });
+        }
+      }
+
+      if (matches.length > 0) {
+        const entry = { path, handle, matches };
+        searchResults.push(entry);
+        totalMatches += matches.length;
+        fragment.appendChild(buildResultGroup(entry));
+      }
+    } catch (e) {
+      // skip unreadable files
+    }
+
+    filesSearched++;
+    if (filesSearched % 50 === 0) {
+      statusEl.textContent = `Searching... ${filesSearched}/${fileIndex.length} files, ${totalMatches} matches`;
+      // Yield to UI
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  resultsEl.innerHTML = '';
+  if (searchResults.length === 0) {
+    resultsEl.innerHTML = '<div class="placeholder">No matches found</div>';
+  } else {
+    resultsEl.appendChild(fragment);
+  }
+
+  progressEl.classList.remove('indeterminate');
+  progressFill.style.width = '100%';
+  setTimeout(() => { progressFill.style.width = '0%'; }, 600);
+  statusEl.textContent = `${totalMatches} matches in ${searchResults.length} files (${filesSearched} searched)`;
+  resultCountEl.textContent = `(${totalMatches})`;
+}
+
+function buildResultGroup(entry) {
+  const group = document.createElement('div');
+  group.className = 'result-group';
+
+  const header = document.createElement('div');
+  header.className = 'result-file';
+  header.innerHTML = `${escapeHtml(entry.path)}<span class="match-count">${entry.matches.length}</span>`;
+  header.addEventListener('click', () => showDocument(entry, null));
+  group.appendChild(header);
+
+  // Show up to 200 matches inline; collapse the rest
+  const limit = 200;
+  const shown = entry.matches.slice(0, limit);
+
+  for (const m of shown) {
+    const line = document.createElement('div');
+    line.className = 'result-line';
+    line.innerHTML = `<span class="line-num">${m.lineNum}</span><span class="line-content">${highlightMatches(m.lineText)}</span>`;
+    line.addEventListener('click', () => {
+      if (activeResultEl) activeResultEl.classList.remove('active');
+      line.classList.add('active');
+      activeResultEl = line;
+      showDocument(entry, m.lineNum);
+    });
+    group.appendChild(line);
+  }
+
+  if (entry.matches.length > limit) {
+    const more = document.createElement('div');
+    more.className = 'result-line';
+    more.style.color = 'var(--text-dim)';
+    more.style.justifyContent = 'center';
+    more.style.cursor = 'pointer';
+    more.textContent = `... ${entry.matches.length - limit} more matches (click to expand)`;
+    more.addEventListener('click', () => {
+      more.remove();
+      for (const m of entry.matches.slice(limit)) {
+        const line = document.createElement('div');
+        line.className = 'result-line';
+        line.innerHTML = `<span class="line-num">${m.lineNum}</span><span class="line-content">${highlightMatches(m.lineText)}</span>`;
+        line.addEventListener('click', () => {
+          if (activeResultEl) activeResultEl.classList.remove('active');
+          line.classList.add('active');
+          activeResultEl = line;
+          showDocument(entry, m.lineNum);
+        });
+        group.appendChild(line);
+      }
+    });
+    group.appendChild(more);
+  }
+
+  return group;
+}
+
+function highlightMatches(text) {
+  const escaped = escapeHtml(text);
+  if (!currentRegex) return escaped;
+  // Re-run regex on escaped text won't align; highlight on raw, then escape parts
+  const parts = [];
+  let lastIdx = 0;
+  const re = new RegExp(currentRegex.source, currentRegex.flags);
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIdx) parts.push(escapeHtml(text.slice(lastIdx, match.index)));
+    parts.push(`<mark>${escapeHtml(match[0])}</mark>`);
+    lastIdx = re.lastIndex;
+    if (match[0].length === 0) { re.lastIndex++; } // prevent infinite loop on zero-length match
+  }
+  if (lastIdx < text.length) parts.push(escapeHtml(text.slice(lastIdx)));
+  return parts.join('');
+}
+
+// --- Document Viewer ---
+async function showDocument(entry, focusLine) {
+  docFilenameEl.textContent = entry.path;
+
+  const matchLineNums = new Set(entry.matches.map(m => m.lineNum));
+  docMatchInfoEl.textContent = `${entry.matches.length} matches`;
+
+  try {
+    const file = await entry.handle.getFile();
+    const text = await file.text();
+    const lines = text.split('\n');
+
+    // Build document using a document fragment for performance
+    const container = document.createElement('div');
+    container.className = 'doc-viewer';
+
+    // For very large files, virtualize or just render all (up to reasonable limit)
+    const totalLines = lines.length;
+    let focusEl = null;
+
+    for (let i = 0; i < totalLines; i++) {
+      const lineNum = i + 1;
+      const div = document.createElement('div');
+      div.className = 'doc-line';
+      const isMatch = matchLineNums.has(lineNum);
+      if (isMatch) {
+        div.classList.add('highlighted');
+        div.innerHTML = `<span class="ln">${lineNum}</span><span class="lc">${highlightMatches(lines[i])}</span>`;
+      } else {
+        div.innerHTML = `<span class="ln">${lineNum}</span><span class="lc">${escapeHtml(lines[i])}</span>`;
+      }
+      if (lineNum === focusLine) focusEl = div;
+      container.appendChild(div);
+    }
+
+    docViewerEl.innerHTML = '';
+    docViewerEl.appendChild(container);
+
+    if (focusEl) {
+      // Scroll the target line into view with some offset
+      requestAnimationFrame(() => {
+        focusEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    }
+  } catch (e) {
+    docViewerEl.innerHTML = `<div class="placeholder">Error reading file: ${e.message}</div>`;
+  }
+}
+
+// --- Resize handle ---
+const resizeHandle = document.getElementById('resize-handle');
+const panelLeft = document.getElementById('panel-left');
+let isResizing = false;
+
+resizeHandle.addEventListener('mousedown', e => {
+  isResizing = true;
+  resizeHandle.classList.add('active');
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', e => {
+  if (!isResizing) return;
+  const containerRect = document.querySelector('.panels').getBoundingClientRect();
+  const newWidth = e.clientX - containerRect.left;
+  const minW = 200;
+  const maxW = containerRect.width - 200;
+  panelLeft.style.width = Math.max(minW, Math.min(maxW, newWidth)) + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+  isResizing = false;
+  resizeHandle.classList.remove('active');
+});
+
+// --- Utils ---
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>
